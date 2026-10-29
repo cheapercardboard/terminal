@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>MTG Terminal · Card Price Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --bg: #000; --panel: #0a0a0a; --panel2: #141414; --line: #2b2b2b; --line2: #3d3d3d;
+    --ink: #f2f2f2; --mute: #a8a8a8; --off: #8a8a8a;
+    --amber: #ffa31a; --amber-dim: #7a4f00; --yellow: #ffd54a; --cyan: #5ccfff;
+    --up: #19e67a; --down: #ff5252; --sel: #0c2d4d; --focus: #5ccfff;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); font-size: var(--fs, 15px); }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 400 1rem/1.5 var(--mono); }
+  button, input, select { font: inherit; color: inherit; }
+  :is(button, input, select, a, tr[tabindex]):focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .up { color: var(--up); } .down { color: var(--down); } .mute { color: var(--mute); } .amber { color: var(--amber); }
+
+  /* top bar: black with an amber rule and an amber-framed command line, like the terminal */
+  .top { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; padding: .6rem .9rem; background: #000; border-bottom: 2px solid var(--amber); }
+  .brand { color: var(--amber); font-weight: 700; letter-spacing: .1em; white-space: nowrap; font-size: 1.1rem; }
+  .brand small { color: var(--mute); font-weight: 400; letter-spacing: 0; margin-left: .7rem; font-size: .8rem; }
+  .cmd { flex: 1 1 18rem; display: flex; align-items: center; gap: .6rem; background: #000; border: 1px solid var(--amber); padding: .3rem .75rem; color: var(--amber); }
+  .cmd:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .cmd input { flex: 1; min-width: 0; background: transparent; border: 0; color: var(--yellow); outline: none; padding: .15rem 0; font-size: 1.05rem; }
+  .cmd input::placeholder { color: #b08a3a; }
+  .cmd kbd { border: 1px solid var(--amber-dim); padding: 0 .4rem; color: var(--mute); font: inherit; font-size: .75rem; }
+  .size { display: flex; gap: 1px; }
+  .size button { background: #000; border: 1px solid var(--amber-dim); color: var(--amber); padding: .2rem .55rem; cursor: pointer; font-size: .85rem; }
+  .size button:hover { background: var(--amber); color: #000; }
+  .clock { white-space: nowrap; font-size: .8rem; color: var(--mute); }
+  #sampleBar { display: none; padding: .4rem .9rem; background: #2b1d00; color: var(--yellow); border-bottom: 1px solid var(--amber-dim); }
+  #sampleBar.on { display: block; }
+  #fmtWarn { display: none; padding: .4rem .9rem; background: #3a1010; color: #ffb0b0; border-bottom: 1px solid #7a2a2a; }
+  #fmtWarn.on { display: block; }
+
+  /* ticker tape */
+  .tape { overflow: hidden; white-space: nowrap; background: #060606; border-bottom: 1px solid var(--line); font-size: .9rem; }
+  .tape-in { display: inline-block; padding: .35rem 0; animation: scroll 70s linear infinite; }
+  .tape:hover .tape-in { animation-play-state: paused; }
+  .tape span { margin: 0 1.2rem; }
+  .tape b { color: var(--amber); font-weight: 600; }
+  @keyframes scroll { to { transform: translateX(-50%); } }
+  @media (prefers-reduced-motion: reduce) { .tape { overflow-x: auto; } .tape-in { animation: none; } }
+
+  /* function keys: colour-coded like the terminal's keys */
+  .fkeys { display: flex; flex-wrap: wrap; gap: 2px; background: #000; padding: 2px; border-bottom: 1px solid var(--line); }
+  .fkeys button { --k: var(--amber); flex: 1 1 8rem; background: var(--panel2); border: 0; border-bottom: 3px solid var(--k); padding: .55rem .75rem; cursor: pointer; text-align: left; color: #d8d8d8; }
+  .fkeys button[data-tab=gainers] { --k: var(--up); }
+  .fkeys button[data-tab=losers] { --k: var(--down); }
+  .fkeys button[data-tab=all] { --k: var(--cyan); }
+  .fkeys button b { color: var(--k); font-weight: 700; margin-right: .5rem; }
+  .fkeys button[aria-pressed="true"] { background: var(--k); color: #000; font-weight: 600; }
+  .fkeys button[aria-pressed="true"] b { color: #000; }
+  .fkeys button:hover:not([aria-pressed="true"]) { background: #222; color: #fff; }
+
+  .filters { display: flex; flex-wrap: wrap; gap: .6rem 1.4rem; padding: .7rem .9rem; background: var(--panel); border-bottom: 1px solid var(--line); align-items: end; }
+  .filters label { display: flex; flex-direction: column; gap: .2rem; font-size: .72rem; color: var(--amber); letter-spacing: .1em; text-transform: uppercase; }
+  .filters select, .filters input { background: #000; border: 1px solid var(--line2); color: var(--ink); padding: .4rem .5rem; min-width: 9rem; border-radius: 0; text-transform: none; letter-spacing: 0; font-size: 1rem; }
+  .filters input[type=number] { min-width: 5rem; width: 6rem; }
+  .filters .reset { background: none; border: 1px solid var(--line2); padding: .4rem .8rem; cursor: pointer; color: var(--mute); }
+  .filters .reset:hover { border-color: var(--amber); color: var(--amber); }
+  .count { margin-left: auto; color: var(--mute); align-self: center; font-size: .9rem; }
+
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) 25rem; align-items: start; }
+  @media (max-width: 62rem) { .grid { grid-template-columns: 1fr; } }
+  .tablewrap { overflow-x: auto; }
+  #notice { padding: .55rem .9rem; border-bottom: 1px solid var(--line); background: #1c1200; color: var(--yellow); display: none; }
+  #notice.on { display: block; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th { position: sticky; top: 0; background: #101010; color: var(--amber); font-weight: 600; font-size: .8rem; letter-spacing: .06em; text-transform: uppercase; text-align: left; padding: 0; border-bottom: 1px solid var(--amber-dim); white-space: nowrap; z-index: 1; }
+  th button { all: unset; box-sizing: border-box; display: block; width: 100%; padding: .55rem .65rem; cursor: pointer; }
+  th button:hover { background: #222; }
+  th button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  th.r button { text-align: right; } th.r { text-align: right; }
+  th .arr { color: var(--ink); margin-left: .3rem; }
+  td { padding: .45rem .65rem; border-bottom: 1px solid #1a1a1a; white-space: nowrap; font-size: .95rem; }
+  td.r { text-align: right; font-variant-numeric: tabular-nums; }
+  td.name { white-space: normal; min-width: 11rem; max-width: 22rem; color: var(--ink); }
+  td.px { color: #fff; font-weight: 600; }
+  td.set { color: var(--cyan); }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #151515; }
+  tbody tr[aria-selected="true"] { background: var(--sel); box-shadow: inset 3px 0 0 var(--amber); }
+  .tk { color: var(--amber); font-weight: 600; }
+  .rar { display: inline-block; width: 1.5rem; text-align: center; border: 1px solid var(--line2); color: var(--mute); font-size: .8rem; }
+  .rar.R { color: #ffd54a; border-color: #7a6420; } .rar.M { color: #ff8a4a; border-color: #8a4420; } .rar.U { color: #c4d0dc; }
+  svg.spark { width: 6rem; height: 1.6rem; vertical-align: middle; display: block; margin-left: auto; }
+  .empty { padding: 2.5rem 1rem; text-align: center; color: var(--mute); }
+  .more { display: block; width: 100%; padding: .75rem; background: var(--panel2); border: 0; border-top: 1px solid var(--line); color: var(--amber); cursor: pointer; }
+  .more:hover { background: #222; }
+  .more[hidden], .empty[hidden] { display: none; }
+  @media (max-width: 46rem) { .hide-s { display: none; } td.name { min-width: 8rem; } }
+
+  /* detail panel */
+  aside { position: sticky; top: 0; border-left: 1px solid var(--line); background: var(--panel); min-height: 20rem; max-height: 100vh; overflow-y: auto; }
+  @media (max-width: 62rem) { aside { position: static; border-left: 0; border-top: 2px solid var(--amber); max-height: none; } }
+  .pad { padding: 1rem; }
+  .d-head { display: flex; gap: .9rem; }
+  .d-head img { width: 6.4rem; height: auto; align-self: flex-start; background: #1a1a1a; border-radius: 4px; flex: none; }
+  .d-head h2 { margin: 0 0 .25rem; font-size: 1.1rem; line-height: 1.25; color: #fff; }
+  .d-px { font-size: 2rem; font-weight: 700; margin: .6rem 0 .1rem; line-height: 1.1; color: #fff; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); margin: .9rem 0; }
+  .stats div { background: var(--panel2); padding: .5rem .6rem; }
+  .stats small { display: block; color: var(--mute); font-size: .75rem; letter-spacing: .06em; }
+  .chart { width: 100%; height: auto; display: block; background: #050505; border: 1px solid var(--line); }
+  .chart-note { color: var(--mute); padding: 1.3rem .6rem; border: 1px dashed var(--line2); text-align: center; }
+  h3 { margin: 1.1rem 0 .5rem; font-size: .75rem; color: var(--amber); letter-spacing: .1em; text-transform: uppercase; font-weight: 600; }
+  .chips { display: flex; flex-wrap: wrap; gap: .35rem; }
+  .chip { padding: .15rem .55rem; border: 1px solid var(--line); color: var(--off); font-size: .85rem; }
+  .chip.on { border-color: var(--up); color: var(--up); }
+  .chip.on::before { content: "\2713  "; }
+  .btn { display: inline-block; margin-top: 1.1rem; padding: .55rem .9rem; border: 1px solid var(--amber); color: var(--amber); text-decoration: none; }
+  .btn:hover { background: var(--amber); color: #000; }
+  .hint { color: var(--mute); padding: 2rem 1rem; text-align: center; }
+  footer { padding: .9rem .9rem 2rem; color: var(--mute); font-size: .8rem; border-top: 1px solid var(--line); }
+  footer a { color: var(--mute); }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">MTG&lt;GO&gt;<small>Card price monitor</small></div>
+  <label class="cmd">
+    <span aria-hidden="true">&gt;</span>
+    <input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="Search card, ticker, set" aria-label="Search by card name, ticker or set">
+    <kbd aria-hidden="true">/</kbd>
+  </label>
+  <div class="size" role="group" aria-label="Text size"><button type="button" id="fsDown" aria-label="Smaller text">A&minus;</button><button type="button" id="fsUp" aria-label="Larger text">A+</button></div>
+  <div class="clock" id="clock"></div>
+</header>
+<div id="sampleBar" role="status">SAMPLE DATA: these numbers are random placeholders. Real TCGplayer prices appear after the first successful workflow run.</div>
+<div id="fmtWarn" role="status">No card in this data file has format legality, so the Format filter and "Legal in" panel are empty. Open the latest workflow run, expand "Collect prices", and look for a WARNING about Scryfall or "Legality matched for ...".</div>
+<div class="tape" aria-hidden="true"><div class="tape-in" id="tape"></div></div>
+
+<nav class="fkeys" aria-label="Views" id="tabs">
+  <button data-tab="gainers" aria-pressed="true"><b>F1</b>Top gainers</button>
+  <button data-tab="losers" aria-pressed="false"><b>F2</b>Top losers</button>
+  <button data-tab="value" aria-pressed="false"><b>F3</b>Most valuable</button>
+  <button data-tab="all" aria-pressed="false"><b>F4</b>All cards</button>
+</nav>
+
+<section class="filters" aria-label="Filters">
+  <label>Set <select id="fSet"></select></label>
+  <label>Format <select id="fFmt"></select></label>
+  <label>Rarity <select id="fRar">
+    <option value="">All</option><option value="M">Mythic</option><option value="R">Rare</option><option value="U">Uncommon</option><option value="C">Common</option></select></label>
+  <label>Min price $ <input id="fMin" type="number" min="0" step="0.25" value="1"></label>
+  <button class="reset" id="reset" type="button">Reset</button>
+  <div class="count" id="count" aria-live="polite"></div>
+</section>
+
+<div id="notice" role="status"></div>
+<div class="grid">
+  <div class="tablewrap">
+    <table>
+      <thead><tr id="thead"></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="empty" hidden>No cards match. Try clearing a filter or the search box.</div>
+    <button class="more" id="more" type="button" hidden></button>
+  </div>
+  <aside id="detail" aria-label="Card detail"><div class="hint">Select a card to see its price history, legality and a link to TCGplayer.</div></aside>
+</div>
+<footer>
+  Prices: TCGplayer market price via <a href="https://tcgcsv.com/">TCGCSV</a>. Format legality: <a href="https://scryfall.com/">Scryfall</a>.
+  Changes compare against the earlier daily snapshots this site has saved. Not affiliated with TCGplayer or Wizards of the Coast. Prices are informational, not advice.
+</footer>
+
+<script src="data.js"></script>
+<script>
+(function () {
+  "use strict";
+  var D = window.MTG || { cards: [], sets: [], formats: [], dates: [] };
+  var cards = D.cards || [];
+  var FMT = { standard: "Standard", pioneer: "Pioneer", modern: "Modern", legacy: "Legacy", vintage: "Vintage", commander: "Commander",
+    pauper: "Pauper", paupercommander: "Pauper Commander", brawl: "Brawl", standardbrawl: "Standard Brawl", historic: "Historic",
+    timeless: "Timeless", alchemy: "Alchemy", oathbreaker: "Oathbreaker", premodern: "Premodern", penny: "Penny Dreadful" };
+  var RAR = { M: "Mythic", R: "Rare", U: "Uncommon", C: "Common" };
+  var PAGE = 150;
+  var FIDX = D.formats || [];            // a card's `fm` number is a bit mask over this list
+  function legal(c, f) {
+    if (Array.isArray(c.fm)) return c.fm.indexOf(f) >= 0;      // older data files listed format names per card
+    var i = FIDX.indexOf(f); return i >= 0 && ((c.fm >> i) & 1) === 1;
+  }
+  var present = FIDX.filter(function (f) { return cards.some(function (c) { return legal(c, f); }); });
+  function imgOf(c) { return c.img || "https://tcgplayer-cdn.tcgplayer.com/product/" + c.id + "_200w.jpg"; }
+  function urlOf(c) { return c.u || "https://www.tcgplayer.com/product/" + c.id; }
+  var $ = function (id) { return document.getElementById(id); };
+  var state = { tab: "gainers", q: "", set: "", fmt: "", rar: "", min: 1, sort: null, dir: -1, limit: PAGE, sel: null };
+
+  // ---------- helpers ----------
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function fold(s) { return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9.]+/g, " ").trim(); }
+  function money(v) { return v == null ? "–" : "$" + (v >= 1000 ? Math.round(v).toLocaleString("en-US") : v.toFixed(2)); }
+  function pct(v) { return v == null ? '<span class="mute">–</span>' : '<span class="' + (v > 0 ? "up" : v < 0 ? "down" : "mute") + '">' + (v > 0 ? "▲ +" : v < 0 ? "▼ " : "") + v.toFixed(1) + "%</span>"; }
+  function pctTxt(v) { return v == null ? "–" : (v > 0 ? "▲ +" : v < 0 ? "▼ " : "") + v.toFixed(1) + "%"; }
+  var setName = {}; (D.sets || []).forEach(function (s) { setName[s.c] = s.name; });
+  cards.forEach(function (c) { c._k = fold(c.n + " " + c.t + " " + c.s + " " + (setName[c.s] || "")); c._kn = c.n.toLowerCase(); });
+  var byId = {}; cards.forEach(function (c) { byId[c.id] = c; });
+  var hasTrend = cards.some(function (c) { return c.d1 != null; });
+
+  function spark(h) {
+    var v = (h || []).filter(function (x) { return x != null; });
+    if (v.length < 2) return '<span class="mute">–</span>';
+    var lo = Math.min.apply(null, v), hi = Math.max.apply(null, v), span = hi - lo || 1, w = 88, ht = 24;
+    var pts = v.map(function (y, i) { return (i / (v.length - 1) * w).toFixed(1) + "," + (ht - 2 - (y - lo) / span * (ht - 4)).toFixed(1); }).join(" ");
+    var up = v[v.length - 1] >= v[0];
+    return '<svg class="spark" viewBox="0 0 ' + w + " " + ht + '" aria-hidden="true"><polyline fill="none" stroke="' + (up ? "var(--up)" : "var(--down)") + '" stroke-width="1.5" points="' + pts + '"/></svg>';
+  }
+
+  // ---------- columns ----------
+  var COLS = [
+    { k: "t", label: "Ticker", cls: "", get: function (c) { return c.t; } },
+    { k: "n", label: "Card", cls: "", get: function (c) { return c.n; } },
+    { k: "s", label: "Set", cls: "hide-s", get: function (c) { return c.s; } },
+    { k: "r", label: "R", cls: "hide-s", get: function (c) { return c.r; } },
+    { k: "p", label: "Price", cls: "r", get: function (c) { return c.p; } },
+    { k: "f", label: "Foil", cls: "r hide-s", get: function (c) { return c.f; } },
+    { k: "d1", label: "1D", cls: "r", get: function (c) { return c.d1; } },
+    { k: "d7", label: "7D", cls: "r hide-s", get: function (c) { return c.d7; } },
+    { k: "d30", label: "30D", cls: "r hide-s", get: function (c) { return c.d30; } },
+    { k: "h", label: "Trend", cls: "r hide-s", get: null }
+  ];
+
+  // ---------- filtering / sorting ----------
+  function filtered() {
+    var toks = fold(state.q).split(" ").filter(Boolean);
+    var out = cards.filter(function (c) {
+      if (state.set && c.s !== state.set) return false;
+      if (state.fmt && !legal(c, state.fmt)) return false;
+      if (state.rar && c.r !== state.rar) return false;
+      if (c.p < state.min) return false;
+      for (var i = 0; i < toks.length; i++) if (c._k.indexOf(toks[i]) < 0) return false;
+      return true;
+    });
+    var key = state.sort, dir = state.dir;
+    if (!key) {
+      if (state.tab === "gainers") { out = out.filter(function (c) { return c.d1 != null; }); key = "d1"; dir = -1; }
+      else if (state.tab === "losers") { out = out.filter(function (c) { return c.d1 != null; }); key = "d1"; dir = 1; }
+      else if (state.tab === "value") { key = "p"; dir = -1; }
+      else { key = "n"; dir = 1; }
+    }
+    var col = COLS.filter(function (x) { return x.k === key; })[0];
+    out.sort(function (a, b) {
+      var x = col.get(a), y = col.get(b);
+      if (x == null && y == null) return 0;
+      if (x == null) return 1;           // empty values always last
+      if (y == null) return -1;
+      if (typeof x === "string") return dir * x.localeCompare(y);
+      return dir * (x - y);
+    });
+    state._key = key; state._dir = dir;
+    return out;
+  }
+
+  // ---------- render ----------
+  var list = [];
+  function render() {
+    var trendTab = state.tab === "gainers" || state.tab === "losers";
+    var notice = $("notice");
+    if (trendTab && !hasTrend && !state.sort) {
+      notice.textContent = "Price changes need at least two days of saved history. The first collector run normally backfills this from TCGCSV\u2019s archives; if you see this, the backfill did not run, and changes will appear after the next daily run. Meanwhile see Most valuable.";
+      notice.className = "on";
+      list = [];
+    } else { notice.className = ""; list = filtered(); }
+    if (!(trendTab && !hasTrend && !state.sort)) { /* list already set */ }
+    $("thead").innerHTML = COLS.map(function (c) {
+      var on = state._key === c.k;
+      var arr = on && c.get ? (state._dir < 0 ? "▼" : "▲") : "";
+      var sortable = !!c.get;
+      return '<th class="' + c.cls + '" scope="col"' + (on && c.get ? ' aria-sort="' + (state._dir < 0 ? "descending" : "ascending") + '"' : "") + ">" +
+        (sortable ? '<button type="button" data-sort="' + c.k + '">' + esc(c.label) + '<span class="arr" aria-hidden="true">' + arr + "</span></button>" : '<span style="padding:.4rem .55rem;display:block">' + esc(c.label) + "</span>") + "</th>";
+    }).join("");
+    var shown = list.slice(0, state.limit);
+    $("rows").innerHTML = shown.map(function (c) {
+      return '<tr tabindex="0" data-id="' + c.id + '" aria-selected="' + (state.sel === c.id) + '">' +
+        '<td class="tk">' + esc(c.t) + "</td>" +
+        '<td class="name">' + esc(c.n) + "</td>" +
+        '<td class="hide-s set">' + esc(c.s) + "</td>" +
+        '<td class="hide-s"><span class="rar ' + esc(c.r) + '" title="' + esc(RAR[c.r] || "") + '">' + esc(c.r) + "</span></td>" +
+        '<td class="r px">' + money(c.p) + "</td>" +
+        '<td class="r hide-s mute">' + money(c.f) + "</td>" +
+        '<td class="r">' + pct(c.d1) + "</td>" +
+        '<td class="r hide-s">' + pct(c.d7) + "</td>" +
+        '<td class="r hide-s">' + pct(c.d30) + "</td>" +
+        '<td class="r hide-s">' + spark(c.h) + "</td></tr>";
+    }).join("");
+    $("empty").hidden = shown.length > 0 || notice.className === "on";
+    var more = $("more");
+    more.hidden = list.length <= shown.length;
+    more.textContent = "Show more (" + (list.length - shown.length).toLocaleString("en-US") + " remaining)";
+    $("count").textContent = list.length.toLocaleString("en-US") + " of " + cards.length.toLocaleString("en-US") + " cards";
+    Array.prototype.forEach.call(document.querySelectorAll("#tabs button"), function (b) { b.setAttribute("aria-pressed", String(b.dataset.tab === state.tab)); });
+    writeHash();
+  }
+
+  function detail(c) {
+    var el = $("detail");
+    if (!c) { el.innerHTML = '<div class="hint">Select a card to see its price history, legality and a link to TCGplayer.</div>'; return; }
+    var pts = (c.h || []), dts = D.dates || [];
+    var have = pts.filter(function (x) { return x != null; }).length;
+    var chart;
+    if (!c.h) {
+      chart = '<div class="chart-note">Price history is only saved for cards worth $1 or more.</div>';
+    } else if (have < 2) {
+      chart = '<div class="chart-note">History builds up one point per day. ' + have + " snapshot" + (have === 1 ? "" : "s") + " saved so far.</div>";
+    } else {
+      var W = 320, H = 130, L = 40, R = 8, T = 10, B = 18;
+      var vals = pts.filter(function (x) { return x != null; });
+      var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals); if (hi === lo) { hi += 1; lo = Math.max(0, lo - 1); }
+      var pad = (hi - lo) * 0.08; lo = Math.max(0, lo - pad); hi += pad;
+      var X = function (i) { return L + i / Math.max(1, pts.length - 1) * (W - L - R); };
+      var Y = function (v) { return T + (1 - (v - lo) / (hi - lo)) * (H - T - B); };
+      var d = "", pen = false;
+      pts.forEach(function (v, i) { if (v == null) { pen = false; return; } d += (pen ? "L" : "M") + X(i).toFixed(1) + " " + Y(v).toFixed(1); pen = true; });
+      var up = vals[vals.length - 1] >= vals[0];
+      var col = up ? "var(--up)" : "var(--down)";
+      var ticks = [lo + pad, (lo + hi) / 2, hi - pad].map(function (v) { return '<text x="' + (L - 5) + '" y="' + (Y(v) + 3.5).toFixed(1) + '" text-anchor="end" fill="#9a9a9a" font-size="11">' + money(v) + '</text><line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(v).toFixed(1) + '" y2="' + Y(v).toFixed(1) + '" stroke="#222"/>'; }).join("");
+      var first = dts[dts.length - pts.length] || "", last = dts[dts.length - 1] || "";
+      chart = '<svg class="chart" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Price history for ' + esc(c.n) + ", " + have + ' days, from ' + money(vals[0]) + " to " + money(vals[vals.length - 1]) + '">' + ticks +
+        '<path d="' + d + '" fill="none" stroke="' + col + '" stroke-width="1.8"/>' +
+        '<text x="' + L + '" y="' + (H - 4) + '" fill="#9a9a9a" font-size="11">' + esc(first.slice(5)) + '</text><text x="' + (W - R) + '" y="' + (H - 4) + '" text-anchor="end" fill="#9a9a9a" font-size="11">' + esc(last.slice(5)) + "</text></svg>";
+    }
+    var chips = c.lg ? present.map(function (f) { return '<span class="chip' + (legal(c, f) ? " on" : "") + '">' + esc(FMT[f] || f) + "</span>"; }).join("") : '<span class="mute">Legality unknown (no Scryfall match for this name).</span>';
+    el.innerHTML = '<div class="pad"><div class="d-head">' + ('<img src="' + esc(imgOf(c)) + '" alt="" loading="lazy" onerror="this.remove()">') +
+      "<div><h2>" + esc(c.n) + '</h2><div><span class="tk">' + esc(c.t) + '</span> <span class="mute">· ' + esc(c.s) + (c.num ? " #" + esc(c.num) : "") + "</span></div>" +
+      '<div class="mute">' + esc(setName[c.s] || "") + (RAR[c.r] ? " · " + RAR[c.r] : "") + "</div></div></div>" +
+      '<div class="d-px">' + money(c.p) + '</div><div class="mute">TCGplayer market' + (c.lo ? " · low " + money(c.lo) : "") + (c.f ? " · foil " + money(c.f) : "") + "</div>" +
+      '<div class="stats"><div><small>1D</small>' + pct(c.d1) + "</div><div><small>7D</small>" + pct(c.d7) + "</div><div><small>30D</small>" + pct(c.d30) + "</div></div>" +
+      chart + "<h3>Legal in</h3><div class=\"chips\">" + chips + "</div>" +
+      '<a class="btn" href="' + esc(urlOf(c)) + '" target="_blank" rel="noopener noreferrer">View on TCGplayer ↗</a></div>';
+  }
+
+  function select(id, focus) {
+    state.sel = id; detail(byId[id]);
+    Array.prototype.forEach.call(document.querySelectorAll("#rows tr"), function (r) { r.setAttribute("aria-selected", String(Number(r.dataset.id) === id)); });
+    writeHash();
+    if (focus && window.matchMedia("(max-width: 62rem)").matches) $("detail").scrollIntoView({ block: "start" });
+  }
+
+  // ---------- controls ----------
+  function fillSelects() {
+    $("fSet").innerHTML = '<option value="">All sets</option>' + (D.sets || []).map(function (s) { return '<option value="' + esc(s.c) + '">' + esc(s.name) + " (" + esc(s.c) + ")</option>"; }).join("");
+    $("fFmt").innerHTML = '<option value="">All formats</option>' + present.map(function (f) { return '<option value="' + esc(f) + '">' + esc(FMT[f] || f) + "</option>"; }).join("");
+  }
+  function redraw() { state.limit = PAGE; render(); }
+  $("q").addEventListener("input", function (e) { state.q = e.target.value; redraw(); });
+  $("q").addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && list.length) { select(list[0].id, true); }
+    if (e.key === "Escape") { e.target.value = ""; state.q = ""; redraw(); }
+    if (e.key === "ArrowDown") { var r = document.querySelector("#rows tr"); if (r) { e.preventDefault(); r.focus(); } }
+  });
+  $("fSet").addEventListener("change", function (e) { state.set = e.target.value; redraw(); });
+  $("fFmt").addEventListener("change", function (e) { state.fmt = e.target.value; redraw(); });
+  $("fRar").addEventListener("change", function (e) { state.rar = e.target.value; redraw(); });
+  $("fMin").addEventListener("input", function (e) { var v = parseFloat(e.target.value); state.min = isNaN(v) ? 0 : Math.max(0, v); redraw(); });
+  $("reset").addEventListener("click", function () {
+    state.q = ""; state.set = ""; state.fmt = ""; state.rar = ""; state.min = 1; state.sort = null;
+    $("q").value = ""; $("fSet").value = ""; $("fFmt").value = ""; $("fRar").value = ""; $("fMin").value = "1"; redraw();
+  });
+  $("tabs").addEventListener("click", function (e) { var b = e.target.closest("button[data-tab]"); if (b) { state.tab = b.dataset.tab; state.sort = null; redraw(); } });
+  $("thead").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-sort]"); if (!b) return;
+    var k = b.dataset.sort;
+    if (state._key === k && state.sort === k) state.dir = -state.dir; else { state.sort = k; state.dir = (k === "n" || k === "t" || k === "s") ? 1 : -1; }
+    state.limit = PAGE; render();
+  });
+  $("more").addEventListener("click", function () { state.limit += PAGE; render(); });
+  $("rows").addEventListener("click", function (e) { var r = e.target.closest("tr"); if (r) select(Number(r.dataset.id), true); });
+  $("rows").addEventListener("keydown", function (e) {
+    var r = e.target.closest("tr"); if (!r) return;
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(Number(r.dataset.id), true); }
+    else if (e.key === "ArrowDown" && r.nextElementSibling) { e.preventDefault(); r.nextElementSibling.focus(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); (r.previousElementSibling || $("q")).focus(); }
+  });
+  document.addEventListener("keydown", function (e) {
+    var t = e.target.tagName; if (t === "INPUT" || t === "SELECT" || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === "/") { e.preventDefault(); $("q").focus(); $("q").select(); return; }
+    var map = { F1: "gainers", F2: "losers", F3: "value", F4: "all" };
+    if (map[e.key]) { e.preventDefault(); state.tab = map[e.key]; state.sort = null; redraw(); }
+  });
+
+  // ---------- URL hash (shareable views) ----------
+  function writeHash() {
+    try {
+      var p = new URLSearchParams();
+      if (state.tab !== "gainers") p.set("tab", state.tab);
+      if (state.q) p.set("q", state.q); if (state.set) p.set("set", state.set); if (state.fmt) p.set("fmt", state.fmt);
+      if (state.rar) p.set("rar", state.rar); if (state.min !== 1) p.set("min", state.min); if (state.sel) p.set("card", state.sel);
+      history.replaceState(null, "", p.toString() ? "#" + p.toString() : location.pathname + location.search);
+    } catch (e) { /* hash is a convenience only */ }
+  }
+  function readHash() {
+    try {
+      var p = new URLSearchParams(location.hash.slice(1));
+      if (["gainers", "losers", "value", "all"].indexOf(p.get("tab")) >= 0) state.tab = p.get("tab");
+      state.q = p.get("q") || ""; state.set = p.get("set") || ""; state.fmt = p.get("fmt") || ""; state.rar = p.get("rar") || "";
+      if (p.has("min") && !isNaN(parseFloat(p.get("min")))) state.min = parseFloat(p.get("min"));
+      if (p.get("card") && byId[Number(p.get("card"))]) state.sel = Number(p.get("card"));
+    } catch (e) { /* ignore */ }
+  }
+
+  // ---------- tape + clock ----------
+  function buildTape() {
+    var movers = cards.filter(function (c) { return c.d1 != null && c.p >= 1; }).sort(function (a, b) { return Math.abs(b.d1) - Math.abs(a.d1); }).slice(0, 14);
+    if (!movers.length) movers = cards.slice().sort(function (a, b) { return b.p - a.p; }).slice(0, 14);
+    var html = movers.map(function (c) { return "<span><b>" + esc(c.t) + "</b> " + money(c.p) + " " + (c.d1 != null ? pct(c.d1) : "") + "</span>"; }).join("");
+    $("tape").innerHTML = html + html;
+  }
+  function clock() {
+    var u = D.updated ? new Date(D.updated) : null;
+    $("clock").textContent = u && !isNaN(u) ? "Updated " + u.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+  }
+
+  // ---------- text size (remembered per browser) ----------
+  var SIZES = [13, 14, 15, 16, 17, 18, 20], fsIdx = 2;
+  try { var saved = parseInt(localStorage.getItem("mtgFs"), 10); if (SIZES.indexOf(saved) >= 0) fsIdx = SIZES.indexOf(saved); } catch (e) { /* storage may be blocked */ }
+  function applySize() {
+    document.documentElement.style.setProperty("--fs", SIZES[fsIdx] + "px");
+    try { localStorage.setItem("mtgFs", String(SIZES[fsIdx])); } catch (e) { /* ignore */ }
+    $("fsDown").disabled = fsIdx === 0; $("fsUp").disabled = fsIdx === SIZES.length - 1;
+  }
+  $("fsDown").addEventListener("click", function () { if (fsIdx > 0) { fsIdx--; applySize(); } });
+  $("fsUp").addEventListener("click", function () { if (fsIdx < SIZES.length - 1) { fsIdx++; applySize(); } });
+  applySize();
+
+  // ---------- go ----------
+  if (D.sample) $("sampleBar").className = "on";
+  if (cards.length && !D.sample && !present.length) $("fmtWarn").className = "on";
+  readHash(); fillSelects();
+  $("q").value = state.q; $("fSet").value = state.set; $("fFmt").value = state.fmt; $("fRar").value = state.rar; $("fMin").value = state.min;
+  if (!cards.length) { $("notice").textContent = "No data loaded. Run the collector (collect_tcgcsv.py) to create site/data.js."; $("notice").className = "on"; }
+  else if (!hasTrend && state.tab === "gainers" && !location.hash) state.tab = "value";
+  buildTape(); clock(); render(); detail(state.sel ? byId[state.sel] : null);
+})();
+</script>
+</body>
+</html>
