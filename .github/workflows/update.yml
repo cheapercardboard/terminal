@@ -1,0 +1,48 @@
+name: Update prices
+
+on:
+  schedule:
+    - cron: "30 21 * * *"   # daily, 21:30 UTC (TCGCSV refreshes around 20:00 UTC)
+  workflow_dispatch:         # "Run workflow" button
+
+permissions:
+  contents: write            # saves data/history.json back to the repository
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install the 7z reader (for TCGCSV's price-history archives)
+        run: pip install py7zr
+      - name: Collect prices (TCGCSV) and legality (Scryfall)
+        run: python collect_tcgcsv.py
+        env:
+          CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
+      - name: Safety check (never publish an empty site)
+        run: python -c "import json,sys; t=open('site/data.js',encoding='utf-8').read(); n=len(json.loads(t.split('window.MTG = ',1)[1].rsplit(';',1)[0])['cards']); print(n,'cards'); sys.exit(0 if n>=3000 else 1)"
+      - name: Save the price history
+        run: |
+          git config user.name "price-bot"
+          git config user.email "price-bot@users.noreply.github.com"
+          git add data/history.json
+          git diff --cached --quiet || (git commit -m "Update price history" && git push)
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v5
