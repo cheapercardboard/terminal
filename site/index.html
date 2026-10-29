@@ -168,6 +168,11 @@
     timeless: "Timeless", alchemy: "Alchemy", oathbreaker: "Oathbreaker", premodern: "Premodern", penny: "Penny Dreadful" };
   var RAR = { M: "Mythic", R: "Rare", U: "Uncommon", C: "Common" };
   var PAGE = 150;
+  var FIDX = D.formats || [];            // a card's `fm` number is a bit mask over this list
+  function legal(c, f) { var i = FIDX.indexOf(f); return i >= 0 && ((c.fm >> i) & 1) === 1; }
+  var present = FIDX.filter(function (f, i) { return cards.some(function (c) { return (c.fm >> i) & 1; }); });
+  function imgOf(c) { return c.img || "https://tcgplayer-cdn.tcgplayer.com/product/" + c.id + "_200w.jpg"; }
+  function urlOf(c) { return c.u || "https://www.tcgplayer.com/product/" + c.id; }
   var $ = function (id) { return document.getElementById(id); };
   var state = { tab: "gainers", q: "", set: "", fmt: "", rar: "", min: 1, sort: null, dir: -1, limit: PAGE, sel: null };
 
@@ -210,7 +215,7 @@
     var toks = fold(state.q).split(" ").filter(Boolean);
     var out = cards.filter(function (c) {
       if (state.set && c.s !== state.set) return false;
-      if (state.fmt && c.fm.indexOf(state.fmt) < 0) return false;
+      if (state.fmt && !legal(c, state.fmt)) return false;
       if (state.rar && c.r !== state.rar) return false;
       if (c.p < state.min) return false;
       for (var i = 0; i < toks.length; i++) if (c._k.indexOf(toks[i]) < 0) return false;
@@ -242,7 +247,7 @@
     var trendTab = state.tab === "gainers" || state.tab === "losers";
     var notice = $("notice");
     if (trendTab && !hasTrend && !state.sort) {
-      notice.textContent = "Price changes need at least two daily snapshots. This site saves one each day, so gainers and losers will appear tomorrow. Meanwhile see Most valuable.";
+      notice.textContent = "Price changes need at least two days of saved history. The first collector run normally backfills this from TCGCSV\u2019s archives; if you see this, the backfill did not run, and changes will appear after the next daily run. Meanwhile see Most valuable.";
       notice.className = "on";
       list = [];
     } else { notice.className = ""; list = filtered(); }
@@ -283,7 +288,9 @@
     var pts = (c.h || []), dts = D.dates || [];
     var have = pts.filter(function (x) { return x != null; }).length;
     var chart;
-    if (have < 2) {
+    if (!c.h) {
+      chart = '<div class="chart-note">Price history is only saved for cards worth $1 or more.</div>';
+    } else if (have < 2) {
       chart = '<div class="chart-note">History builds up one point per day. ' + have + " snapshot" + (have === 1 ? "" : "s") + " saved so far.</div>";
     } else {
       var W = 320, H = 130, L = 40, R = 8, T = 10, B = 18;
@@ -302,15 +309,14 @@
         '<path d="' + d + '" fill="none" stroke="' + col + '" stroke-width="1.8"/>' +
         '<text x="' + L + '" y="' + (H - 4) + '" fill="#9a9a9a" font-size="10">' + esc(first.slice(5)) + '</text><text x="' + (W - R) + '" y="' + (H - 4) + '" text-anchor="end" fill="#9a9a9a" font-size="10">' + esc(last.slice(5)) + "</text></svg>";
     }
-    var legal = D.formats && D.formats.length ? D.formats : Object.keys(FMT);
-    var chips = c.lg ? legal.map(function (f) { return '<span class="chip' + (c.fm.indexOf(f) >= 0 ? " on" : "") + '">' + esc(FMT[f] || f) + "</span>"; }).join("") : '<span class="mute">Legality unknown (no Scryfall match).</span>';
-    el.innerHTML = '<div class="pad"><div class="d-head">' + (c.img ? '<img src="' + esc(c.img) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : "") +
+    var chips = c.lg ? present.map(function (f) { return '<span class="chip' + (legal(c, f) ? " on" : "") + '">' + esc(FMT[f] || f) + "</span>"; }).join("") : '<span class="mute">Legality unknown (no Scryfall match for this name).</span>';
+    el.innerHTML = '<div class="pad"><div class="d-head">' + ('<img src="' + esc(imgOf(c)) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">') +
       "<div><h2>" + esc(c.n) + '</h2><div><span class="tk">' + esc(c.t) + '</span> <span class="mute">· ' + esc(c.s) + (c.num ? " #" + esc(c.num) : "") + "</span></div>" +
       '<div class="mute">' + esc(setName[c.s] || "") + (RAR[c.r] ? " · " + RAR[c.r] : "") + "</div></div></div>" +
       '<div class="d-px">' + money(c.p) + '</div><div class="mute">TCGplayer market' + (c.lo ? " · low " + money(c.lo) : "") + (c.f ? " · foil " + money(c.f) : "") + "</div>" +
       '<div class="stats"><div><small>1D</small>' + pct(c.d1) + "</div><div><small>7D</small>" + pct(c.d7) + "</div><div><small>30D</small>" + pct(c.d30) + "</div></div>" +
       chart + "<h3>Legal in</h3><div class=\"chips\">" + chips + "</div>" +
-      '<a class="btn" href="' + esc(c.u) + '" target="_blank" rel="noopener noreferrer">View on TCGplayer ↗</a></div>';
+      '<a class="btn" href="' + esc(urlOf(c)) + '" target="_blank" rel="noopener noreferrer">View on TCGplayer ↗</a></div>';
   }
 
   function select(id, focus) {
@@ -322,8 +328,8 @@
 
   // ---------- controls ----------
   function fillSelects() {
-    $("fSet").innerHTML = '<option value="">All recent sets</option>' + (D.sets || []).map(function (s) { return '<option value="' + esc(s.c) + '">' + esc(s.name) + " (" + esc(s.c) + ")</option>"; }).join("");
-    $("fFmt").innerHTML = '<option value="">All formats</option>' + (D.formats || []).map(function (f) { return '<option value="' + esc(f) + '">' + esc(FMT[f] || f) + "</option>"; }).join("");
+    $("fSet").innerHTML = '<option value="">All sets</option>' + (D.sets || []).map(function (s) { return '<option value="' + esc(s.c) + '">' + esc(s.name) + " (" + esc(s.c) + ")</option>"; }).join("");
+    $("fFmt").innerHTML = '<option value="">All formats</option>' + present.map(function (f) { return '<option value="' + esc(f) + '">' + esc(FMT[f] || f) + "</option>"; }).join("");
   }
   function redraw() { state.limit = PAGE; render(); }
   $("q").addEventListener("input", function (e) { state.q = e.target.value; redraw(); });
